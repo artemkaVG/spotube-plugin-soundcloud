@@ -1,0 +1,122 @@
+# Copyright (C) 2026 artemkaVG
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+#
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+name: Publish Plugin
+
+on:
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: Where should this build go?
+        type: choice
+        options:
+          - stable
+          - continuous
+        default: stable
+
+concurrency:
+  group: publish-${{ inputs.channel }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  MODULE: spotube_plugin_soundcloud
+  LC_ALL: C.UTF-8
+  LANG: C.UTF-8
+
+jobs:
+  build:
+    name: Build .smplug
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    outputs:
+      plugin-version: ${{ steps.meta.outputs.plugin-version }}
+
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v7.0.1
+
+      - name: Install JDK 21
+        uses: actions/setup-java@v6.3.0
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Configure Gradle
+        uses: gradle/actions/setup-gradle@v6.4.1
+
+      - name: Test and package plugin
+        run: >-
+          ./gradlew --no-daemon --no-configuration-cache --no-build-cache
+          clean build
+          ":$MODULE:packageProductionPlugin"
+
+      - name: Test release preparation
+        run: python3 -m unittest discover -s scripts -p 'test_*.py'
+
+      - name: Prepare release asset
+        id: meta
+        run: python3 scripts/prepare-release.py
+
+      - name: Upload build output
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: soundcloud-smplug
+          path: dist/*.smplug
+          if-no-files-found: error
+
+  release:
+    name: GitHub release (${{ inputs.channel }})
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download build output
+        uses: actions/download-artifact@v8.0.2
+        with:
+          name: soundcloud-smplug
+          path: dist
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          CHANNEL: ${{ inputs.channel }}
+          VERSION: ${{ needs.build.outputs.plugin-version }}
+        run: |
+          assets=(dist/*.smplug)
+          if [ "${#assets[@]}" -ne 1 ] || [ ! -s "${assets[0]}" ]; then
+            echo "::error::Expected exactly one plugin asset"
+            exit 1
+          fi
+          if [ "$CHANNEL" = "continuous" ]; then
+            if gh release view continuous > /dev/null 2>&1; then
+              gh release delete continuous --yes --cleanup-tag
+            fi
+            gh release create continuous "${assets[0]}" \
+              --target "$GITHUB_SHA" \
+              --title "Continuous ($(date -u +%Y-%m-%d))" \
+              --notes "Built from ${GITHUB_SHA::7}. Not a stable release." \
+              --prerelease
+          else
+            gh release create "$VERSION" "${assets[0]}" \
+              --target "$GITHUB_SHA" \
+              --title "$VERSION" \
+              --generate-notes
+          fi
