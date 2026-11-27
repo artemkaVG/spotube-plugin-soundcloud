@@ -1,6 +1,6 @@
 # Unofficial SoundCloud plugin for Spotube
 
-SoundCloud metadata plugin for [Spotube](https://spotube.cc)
+SoundCloud metadata plugin for [Spotube](https://spotube.cc). No SoundCloud account required.
 
 ## Build
 
