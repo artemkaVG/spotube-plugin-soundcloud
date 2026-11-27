@@ -1,7 +1,5 @@
 # Unofficial SoundCloud plugin for Spotube
 
-[Русский](README.ru.md)
-
 SoundCloud metadata plugin for [Spotube](https://spotube.cc)
 
 ## Build
